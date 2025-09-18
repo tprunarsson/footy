@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import numpy as np
 from numba import njit
+import time
 
 DEFAULT_REWARD = -1.0
 GOAL_REWARD = 100.0
@@ -294,7 +295,10 @@ class QFootyNumba:
                     terminals += 1
                     break
             tot_len += moves
-        return {"episodes": episodes, "terminals": int(terminals), "avg_len": (tot_len / episodes) if episodes > 0 else 0.0,
+        return {"episodes": episodes,
+                "terminals": int(terminals),
+                "avg_len": (tot_len / episodes) if episodes > 0 else 0.0,
+                "total_moves": int(tot_len),
                 "goals": (int(goals[0]), int(goals[1]))}
 
     def save_player(self, path: str, p: int):
@@ -309,14 +313,29 @@ if __name__ == "__main__":
     ap.add_argument('--gamma', type=float, default=0.95)
     ap.add_argument('--optimistic', type=float, default=10.0)
     ap.add_argument('--seed', type=int, default=42)
+    ap.add_argument('--n', type=int, default=13)
+    ap.add_argument('--m', type=int, default=10)
     args = ap.parse_args()
 
-    env = QFootyNumba(n=13, m=10, alpha=args.alpha, gamma=args.gamma, epsilon=args.epsilon, seed=args.seed)
+    env = QFootyNumba(n=args.n, m=args.m, alpha=args.alpha, gamma=args.gamma, epsilon=args.epsilon, seed=args.seed)
     # optimistic init
     env.Q.fill(np.float32(args.optimistic))
 
     print("Training (Numba)...")
+    # Warm up JIT (compile) without counting toward timing
+    t_compile = time.perf_counter()
+    _ = env.train(episodes=1, max_moves=1)
+    compile_sec = time.perf_counter() - t_compile
+
+    t0 = time.perf_counter()
     stats = env.train(episodes=args.episodes, max_moves=args.max_moves)
+    t1 = time.perf_counter()
+
+    train_sec = t1 - t0
+    steps = stats.get("total_moves", int(stats["avg_len"] * stats["episodes"]))
+    steps_per_sec = steps / train_sec if train_sec > 0 else float('inf')
+
+    print(f"Compile warmup: {compile_sec:.3f}s | Train: {train_sec:.3f}s | ~{steps} moves @ {steps_per_sec:.0f} moves/s")
     print("Stats:", stats)
 
     env.save_player("q_player0.npy", 0)
