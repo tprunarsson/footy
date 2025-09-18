@@ -324,7 +324,7 @@ if __name__ == "__main__":
     params = QParams(alpha=args.alpha, gamma=args.gamma, epsilon=args.epsilon,
                      optimistic_init=args.optimistic, illegal_switches_turn=False,
                      illegal_penalty=0.0)
-    env = QFootyEnv(n=13, m=9, np_players=2, params=params, rng_seed=args.seed)
+    env = QFootyEnv(n=13, m=10, np_players=2, params=params, rng_seed=args.seed)
 
     print("Training... (demo run)")
     stats = env.train(episodes=args.episodes, max_moves=args.max_moves)

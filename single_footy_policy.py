@@ -12,7 +12,7 @@ Read-only policy for a trained Q player (inference-only), mirroring the C++ sing
 
 Usage:
     from single_footy_policy import SingleFooty
-    pol = SingleFooty(n=13, m=9, epsilon=0.1, debug=True, stay_debit=0.25)
+    pol = SingleFooty(n=13, m=10, epsilon=0.1, debug=True, stay_debit=0.25)
     pol.load("q_player0.npy")
     a = pol.action(ip=5, jp=4, io=7, jo=4, ib=6, jb=4)
 """
@@ -159,7 +159,7 @@ class SingleFooty:
 
 # Small CLI demo
 if __name__ == "__main__":
-    pol = SingleFooty(n=13, m=9, epsilon=0.1, rng_seed=1, debug=True, stay_debit=0.25)
+    pol = SingleFooty(n=13, m=10, epsilon=0.1, rng_seed=1, debug=True, stay_debit=0.25)
     try:
         pol.load("q_player0.npy")
     except Exception as e:

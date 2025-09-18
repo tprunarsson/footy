@@ -99,7 +99,7 @@ def main():
     ap.add_argument('--p0', required=True, help='path to q slab for player 0 (.npy)')
     ap.add_argument('--p1', required=True, help='path to q slab for player 1 (.npy)')
     ap.add_argument('--n', type=int, default=13)
-    ap.add_argument('--m', type=int, default=9)
+    ap.add_argument('--m', type=int, default=10)
     ap.add_argument('--rounds', type=int, default=49)
     ap.add_argument('--delay', type=float, default=0.0, help='seconds between steps (ASCII mode)')
     ap.add_argument('--ascii', action='store_true', help='render a simple ASCII field each step')
