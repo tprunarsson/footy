@@ -92,6 +92,91 @@ def render_ascii(n, m, pitch, ip0, jp0, ip1, jp1, ib, jb, labels="numbers"):
     print(s)
 
 
+# ---- Pygame Renderer ----
+try:
+    import pygame
+except ImportError:
+    pygame = None
+
+COLORS = {
+    "bg": (34, 139, 34),    # pitch green
+    "wall": (90, 90, 90),
+    "goal": (30, 180, 30),
+    "p0": (220, 50, 50),    # red
+    "p1": (50, 100, 240),   # blue
+    "ball": (210, 180, 20),
+    "text": (240, 240, 240),
+}
+
+class PygameRenderer:
+    def __init__(self, n=13, m=10, cell=40, margin=20, labels="numbers", fps=30):
+        if pygame is None:
+            raise RuntimeError("Install pygame first: pip install pygame")
+        pygame.init()
+        self.n, self.m = n, m
+        self.cell = cell
+        self.margin = margin
+        self.labels = labels
+        self.fps = fps
+        w = margin*2 + m*cell
+        h = margin*2 + n*cell
+        self.screen = pygame.display.set_mode((w, h))
+        pygame.display.set_caption("Q-Footy")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.SysFont(None, int(cell*0.6))
+
+    def _rc2xy(self, i, j):  # grid (row=i, col=j) -> pixel rect
+        x = self.margin + j*self.cell
+        y = self.margin + i*self.cell
+        return pygame.Rect(x, y, self.cell, self.cell)
+
+    def draw(self, pitch, ip0, jp0, ip1, jp1, ib, jb, score0, score1, round_idx=None):
+        # events (allow window close)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                raise SystemExit
+
+        self.screen.fill(COLORS["bg"])
+        # Draw walls & goals
+        n, m = pitch.shape
+        top_row, bot_row = 1, n-2
+        ml, mr = m//2 - 1, m//2
+
+        for i in range(n):
+            for j in range(m):
+                r = self._rc2xy(i, j)
+                if not pitch[i, j]:
+                    pygame.draw.rect(self.screen, COLORS["wall"], r)
+        for j in (ml, mr):
+            pygame.draw.rect(self.screen, COLORS["goal"], self._rc2xy(top_row, j))
+            pygame.draw.rect(self.screen, COLORS["goal"], self._rc2xy(bot_row, j))
+
+        # Players
+        for (ip, jp, color, label) in [
+            (ip0, jp0, COLORS["p0"], "0"),
+            (ip1, jp1, COLORS["p1"], "1"),
+        ]:
+            r = self._rc2xy(ip, jp)
+            pygame.draw.rect(self.screen, color, r, border_radius=int(self.cell*0.2))
+            if self.labels == "numbers":
+                surf = self.font.render(label, True, (255,255,255))
+                self.screen.blit(surf, (r.x + r.w*0.33, r.y + r.h*0.18))
+
+        # Ball (circle inset)
+        rb = self._rc2xy(ib, jb).inflate(-self.cell*0.4, -self.cell*0.4)
+        pygame.draw.ellipse(self.screen, COLORS["ball"], rb)
+
+        # HUD
+        hud = f"P0 {score0} - {score1} P1"
+        if round_idx is not None:
+            hud = f"Round {round_idx} | " + hud
+        hud_surf = self.font.render(hud, True, COLORS["text"])
+        self.screen.blit(hud_surf, (self.margin, 5))
+
+        pygame.display.flip()
+        self.clock.tick(self.fps)  # limit FPS
+
+
 # ------------------------ Match Runner ------------------------------------- #
 
 def main():
@@ -109,6 +194,9 @@ def main():
     ap.add_argument('--start', choices=['random','p0','p1'], default='random', help='Who starts in round 1')
     ap.add_argument('--next', dest='next_policy', choices=['loser','winner','alternate','random'], default='loser', help='Who starts rounds after each goal')
     ap.add_argument('--debug', action='store_true', help='print per-move Q-values and chosen action')
+    ap.add_argument('--pygame', action='store_true')
+    ap.add_argument('--fps', type=int, default=30)
+
     args = ap.parse_args()
 
     if args.seed is not None:
@@ -118,6 +206,10 @@ def main():
     n, m = args.n, args.m
     pitch = init_pitch(n, m)
     reward = init_reward(n, m)
+    
+    renderer = None
+    if args.pygame:
+        renderer = PygameRenderer(n, m, cell=40, labels=args.labels, fps=args.fps)
 
     pol0 = SingleFooty(n=n, m=m, epsilon=0.05, debug=args.debug)
     pol0.load(args.p0)
@@ -144,7 +236,9 @@ def main():
 
     for r in range(args.rounds):
         ib, jb, (ip0, jp0), (ip1, jp1) = initialize_round(n, m)
-        if args.ascii:
+        if args.pygame:
+            renderer.draw(pitch, ip0, jp0, ip1, jp1, ib, jb, goals[0], goals[1], round_idx=r+1)
+        elif args.ascii:
             print(f"\n=== Round {r+1}/{args.rounds} | score P0:{goals[0]} P1:{goals[1]} | start player {iip} ===")
             render_ascii(n, m, pitch, ip0, jp0, ip1, jp1, ib, jb, labels=args.labels)
 
@@ -268,10 +362,12 @@ def main():
 
             # Next player's turn
             iip = 1 - iip
-            if args.ascii:
+            if args.pygame:
+                renderer.draw(pitch, ip0, jp0, ip1, jp1, ib, jb, goals[0], goals[1], round_idx=r+1)
+            elif args.ascii:
                 render_ascii(n, m, pitch, ip0, jp0, ip1, jp1, ib, jb, labels=args.labels)
-                if args.delay:
-                    time.sleep(args.delay)
+            if args.delay:
+                time.sleep(args.delay)
 
     print(f"\nFinal score after {args.rounds} rounds: P0 {goals[0]} - P1 {goals[1]}")
     if goals[0] > goals[1]:
