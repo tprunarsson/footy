@@ -7,6 +7,7 @@ import itertools
 # Import your two policy families
 from single_footy_policy import SingleFooty
 from single_block_policy import SingleBlock
+from single_agsmab_policy import SingleAgsmab
 
 # --- add near the top ---
 import inspect
@@ -177,6 +178,12 @@ class PolicyWrap:
                 self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug, player_id=player_id)
             else:
                 self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug)
+        elif self.kind == "agsmab":
+            if _supports_kw(SingleBlock.__init__, "player_id"):
+                self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug, player_id=player_id)
+            else:
+                self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug)
+ 
         else:
             raise ValueError(f"Unknown policy kind '{kind}'. Use 'footy' or 'block'.")
 

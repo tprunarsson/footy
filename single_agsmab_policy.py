@@ -93,7 +93,7 @@ def zone12_bin(ib: int, jb: int, io: int, jo: int) -> int:
             return 10 if left else 11
 
 
-class SingleFooty:
+class SingleAgsmab:
     def __init__(self, n: int = 13, m: int = 9, epsilon: float = 0.1, rng_seed: int | None = None,
                  debug: bool = False, stay_debit: float = 0.0):
         self.n = n
