@@ -179,11 +179,12 @@ class PolicyWrap:
             else:
                 self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug)
         elif self.kind == "agsmab":
-            if _supports_kw(SingleBlock.__init__, "player_id"):
-                self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug, player_id=player_id)
+            # was SingleBlock; fix to SingleAgsmab
+            if _supports_kw(SingleAgsmab.__init__, "player_id"):
+                self.obj = SingleAgsmab(n=n, m=m, epsilon=epsilon, debug=debug, player_id=player_id)
             else:
-                self.obj = SingleBlock(n=n, m=m, epsilon=epsilon, debug=debug)
- 
+                self.obj = SingleAgsmab(n=n, m=m, epsilon=epsilon, debug=debug)
+        
         else:
             raise ValueError(f"Unknown policy kind '{kind}'. Use 'footy' or 'block'.")
 
