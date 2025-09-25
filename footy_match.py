@@ -214,11 +214,12 @@ def main():
     pol0 = SingleFooty(n=n, m=m, epsilon=0.05, debug=args.debug)
     pol0.load(args.p0)
     pol1 = SingleFooty(n=n, m=m, epsilon=0.05, debug=args.debug)
+    pol1.load(args.p1)
     if args.mirror:
-        pol1.load(args.p0)
+       # pol1.load(args.p0)
         mirror = True
     else:
-        pol1.load(args.p1)
+       # pol1.load(args.p1)
         mirror = False
 
     # Dynamic action sets (support 4- or 5-action slabs per player)
