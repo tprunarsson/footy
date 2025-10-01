@@ -8,6 +8,7 @@ import itertools
 from single_footy_policy import SingleFooty
 from single_block_policy import SingleBlock
 from single_agsmab_policy import SingleAgsmab
+from single_group5_policy import SingleGroup5
 
 # --- add near the top ---
 import inspect
@@ -184,7 +185,11 @@ class PolicyWrap:
                 self.obj = SingleAgsmab(n=n, m=m, epsilon=epsilon, debug=debug, player_id=player_id)
             else:
                 self.obj = SingleAgsmab(n=n, m=m, epsilon=epsilon, debug=debug)
-        
+        elif self.kind == "group5":
+            if _supports_kw(SingleAgsmab.__init__, "player_id"):
+                self.obj = SingleGroup5(n=n, m=m, epsilon=epsilon, debug=debug, player_id=player_id)
+            else:
+                self.obj = SingleGroup5(n=n, m=m, epsilon=epsilon, debug=debug)
         else:
             raise ValueError(f"Unknown policy kind '{kind}'. Use 'footy' or 'block'.")
 

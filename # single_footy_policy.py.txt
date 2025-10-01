@@ -1,0 +1,208 @@
+# single_footy_policy.py
+# Read-only policy that supports:
+#  1) Dense slab [.n,.m,.n,.m,na]  (teacher format)
+#  2) Encoded dict (.npy, "encoded_dict_v1") from trainer.py
+from __future__ import annotations
+import numpy as np, random
+from typing import Tuple, List, Dict
+
+ACTIONS4: List[Tuple[int,int]] = [(-1,0),(0,1),(1,0),(0,-1)]
+ACTIONS5: List[Tuple[int,int]] = ACTIONS4 + [(0,0)]
+ACTION_NAMES4 = ['N','E','S','W']
+ACTION_NAMES5 = ['N','E','S','W','Stay']
+
+# ---- Encoder (must match trainer) ----
+class _EncoderCfg:
+    def __init__(self, bin_mode:str="clip5", include_flags:bool=True):
+        self.bin_mode = bin_mode; self.include_flags = include_flags
+
+class _StateEncoder:
+    def __init__(self, n:int, m:int, cfg:_EncoderCfg):
+        self.n, self.m, self.cfg = n, m, cfg
+    @staticmethod
+    def _clip5(d:int)->int: return int(max(-2, min(2, d)))
+    @staticmethod
+    def _pos(ip,jp, io,jo, ib,jb)->int:
+        if ip==ib and jp==jb: return 1
+        if io==ib and jo==jb: return 2
+        return 0
+    def encode(self, ip,jp, io,jo, ib,jb):
+        dx_o = self._clip5(io - ip); dy_o = self._clip5(jo - jp)
+        dx_b = self._clip5(ib - ip); dy_b = self._clip5(jb - jp)
+        pos = self._pos(ip,jp, io,jo, ib,jb)
+        if self.cfg.include_flags:
+            opp_between = int((jp == jb == jo) and ((ip <= ib <= io) or (io <= ib <= ip)))
+            ball_ahead  = int(ib > ip)  # attacking down
+            return (dx_o, dy_o, dx_b, dy_b, pos, opp_between, ball_ahead)
+        return (dx_o, dy_o, dx_b, dy_b, pos)
+
+class SingleFooty:
+    def __init__(self, n: int = 13, m: int = 10, epsilon: float = 0.0,
+                 rng_seed: int | None = None, debug: bool = False, stay_debit: float = 0.0):
+        self.n, self.m = n, m
+        self.na = 4
+        self.epsilon = float(epsilon)      # trainer eval is greedy; default 0.0
+        self.debug = bool(debug)
+        self.stay_debit = float(stay_debit)
+        if rng_seed is not None:
+            random.seed(rng_seed); np.random.seed(rng_seed)
+
+        # pitch
+        self.pitch = np.zeros((n, m), dtype=bool)
+        self.pitch[1:n-1, 1:m-1] = True
+        self.pitch[:, 0] = self.pitch[:, m-1] = self.pitch[0, :] = self.pitch[n-1, :] = False
+
+        # storage
+        self.mode = "dense"              # 'dense' | 'encoded'
+        self.Q_dense: np.ndarray | None = None  # [n,m,n,m,na]
+        self.Q_dict: Dict[tuple, np.ndarray] | None = None
+        self.encoder: _StateEncoder | None = None
+        self.q_default: float = 0.0      # used for unseen encoded states
+
+    def _actions(self):
+        return (ACTIONS5, ACTION_NAMES5) if self.na == 5 else (ACTIONS4, ACTION_NAMES4)
+
+    @staticmethod
+    def _flip_ns(a: int) -> int:
+        # N(0) <-> S(2), others unchanged
+        return 2 if a == 0 else (0 if a == 2 else a)
+
+    def load(self, path: str) -> bool:
+        """Loads either dense slab or encoded-dict .npy (allow_pickle required)."""
+        obj = np.load(path, allow_pickle=True)
+        # Dense slab?
+        if isinstance(obj, np.ndarray) and obj.ndim == 5 and obj.shape[0] == self.n and obj.shape[1] == self.m and obj.shape[2] == self.n and obj.shape[3] == self.m:
+            if obj.shape[4] not in (4,5):
+                raise ValueError(f"Unsupported action dim {obj.shape[4]}")
+            self.na = int(obj.shape[4])
+            self.Q_dense = obj.astype(np.float32, copy=False)
+            self.mode = "dense"
+            return True
+
+        # Encoded dict (saved as a 0-d object array or a dict directly)
+        payload = obj.item() if hasattr(obj, "item") else obj
+        if not isinstance(payload, dict) or payload.get("format") != "encoded_dict_v1":
+            raise ValueError("Not an encoded_dict_v1 model.")
+        if payload["n"] != self.n or payload["m"] != self.m:
+            raise ValueError(f"Model grid mismatch: ({payload['n']},{payload['m']}) vs ({self.n},{self.m})")
+        self.na = int(payload.get("na", 5))
+        keys = payload.get("Q_keys", [])
+        vals = payload.get("Q_values", np.zeros((0,self.na), dtype=np.float32))
+        self.Q_dict = {}
+        for k, v in zip(keys, vals):
+            self.Q_dict[tuple(k)] = np.asarray(v, dtype=np.float32)
+        enc_cfg = payload.get("encoder", {"bin_mode":"clip5", "include_flags":True})
+        self.encoder = _StateEncoder(self.n, self.m, _EncoderCfg(enc_cfg.get("bin_mode","clip5"),
+                                                                 bool(enc_cfg.get("include_flags", True))))
+        self.q_default = float(payload.get("optimistic_init", 0.0))
+        self.mode = "encoded"
+        return True
+
+    def _legal_mask(self, ip:int, jp:int, io:int, jo:int) -> np.ndarray:
+        actions,_ = self._actions()
+        mask = np.zeros(self.na, dtype=bool)
+        for a in range(self.na):
+            di,dj = actions[a]
+            ii, jj = ip+di, jp+dj
+            mask[a] = self.pitch[ii, jj] and not (ii == io and jj == jo)
+        # If na==5, Stay was evaluated like others; it will be legal (interior cell).
+        return mask
+
+    def _greedy_with_tiebreak(self, q_eff: np.ndarray) -> int:
+        # Prefer South (2) on ties, just like trainer/eval.
+        mx = np.max(q_eff)
+        best = np.flatnonzero(np.isclose(q_eff, mx))
+        return 2 if (self.na >= 3 and 2 in best) else int(random.choice(best))
+
+    def _q_for_state(self, ip:int, jp:int, io:int, jo:int, ib:int, jb:int) -> np.ndarray:
+        if self.mode == "dense":
+            return self.Q_dense[ip, jp, ib, jb].astype(np.float32, copy=False)
+        # encoded
+        s = self.encoder.encode(ip,jp, io,jo, ib,jb)
+        return np.array(self.Q_dict.get(s, np.full(self.na, self.q_default, dtype=np.float32)), dtype=np.float32)
+
+    def action(self, ip: int, jp: int, io: int, jo: int, ib: int, jb: int) -> int:
+        """Play as the BOTTOM player (P0), which matches training orientation."""
+        if self.mode == "dense" and self.Q_dense is None:
+            raise RuntimeError("Dense model not loaded.")
+        if self.mode == "encoded" and (self.Q_dict is None or self.encoder is None):
+            raise RuntimeError("Encoded model not loaded.")
+
+        names = self._actions()[1]
+        legal = self._legal_mask(ip, jp, io, jo)
+
+        # epsilon explore among LEGAL
+        if random.random() < self.epsilon:
+            legal_idxs = np.flatnonzero(legal)
+            if legal_idxs.size == 0:
+                return -1
+            a = int(random.choice(legal_idxs))
+            if self.debug:
+                print(f"[explore] chose {names[a]}")
+            return a
+
+        # greedy with trainer-consistent tiebreak
+        q = self._q_for_state(ip, jp, io, jo, ib, jb).copy()
+        q_eff = q.copy()
+        q_eff[~legal] = -np.inf
+        if self.na == 5 and self.stay_debit != 0.0:
+            q_eff[4] = q_eff[4] - self.stay_debit
+        a = self._greedy_with_tiebreak(q_eff)
+
+        if self.debug:
+            lm = ", ".join(names[k] for k in range(self.na) if legal[k]) or "<none>"
+            qstr = ", ".join(f"{names[k]}:{q[k]:.2f}" for k in range(self.na))
+            estr = ", ".join(f"{names[k]}:{('-inf' if not np.isfinite(q_eff[k]) else f'{q_eff[k]:.2f}')}" for k in range(self.na))
+            print(f"state ip={ip} jp={jp} io={io} jo={jo} ib={ib} jb={jb}")
+            print(f"Q raw: {qstr}")
+            if self.na==5 and self.stay_debit!=0.0: print(f"stay_debit applied: -{self.stay_debit}")
+            print(f"legal: {lm}")
+            print(f"Q eff: {estr}")
+            print(f"greedy -> {names[a]}")
+        return a
+
+    # Optional: play as the TOP player (P1) by mirroring rows like SnapshotOpp.
+    def action_top(self, ip:int, jp:int, io:int, jo:int, ib:int, jb:int) -> int:
+        """Play as the TOP player (P1) by vertical mirroring of rows."""
+        # original legal, then map to mirrored mask
+        legal_orig = self._legal_mask(ip, jp, io, jo)
+        legal_mirror = np.zeros_like(legal_orig)
+        for a_idx, ok in enumerate(legal_orig):
+            if ok: legal_mirror[self._flip_ns(a_idx)] = True
+
+        # mirror coordinates for encoding
+        ipm = self.n - 1 - ip
+        iom = self.n - 1 - io
+        ibm = self.n - 1 - ib
+        q = self._q_for_state(ipm, jp, iom, jo, ibm, jb).copy()
+
+        # epsilon explore among ORIGINAL legal (return in original frame)
+        if random.random() < self.epsilon:
+            legal_idxs = np.flatnonzero(legal_orig)
+            if legal_idxs.size == 0: return -1
+            return int(random.choice(legal_idxs))
+
+        # mask in MIRRORED frame, tie-break prefer South in mirrored frame
+        q_eff = q.copy()
+        bad = ~legal_mirror
+        q_eff[bad] = -np.inf
+        a_mirror = self._greedy_with_tiebreak(q_eff)
+
+        # map back to original frame
+        a = self._flip_ns(a_mirror)
+        return a
+
+    def notify_goal(self, goal:int):
+        return
+
+# CLI smoke test
+if __name__ == "__main__":
+    pol = SingleFooty(n=13, m=10, epsilon=0.0, rng_seed=1, debug=True, stay_debit=0.0)
+    try:
+        pol.load("my_agent_best.npy")  # encoded-by-default from trainer.py
+    except Exception as e:
+        print("Load failed:", e)
+    if pol.mode in ("dense","encoded"):
+        print("Loaded mode:", pol.mode, "na:", pol.na)
+        # Bottom player call:
+        print("Chosen action (P0):", pol.action(6,4, 7,4, 6,5))
